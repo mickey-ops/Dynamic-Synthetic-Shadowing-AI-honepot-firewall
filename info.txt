@@ -1,0 +1,152 @@
+# Generative API Shadowing: A Dynamic AI Honeypot Firewall Module
+
+## 1. Project Description
+
+Generative API Shadowing is an adaptive, deception-based security layer that sits inline in front of a production API. Instead of the binary allow/block behavior of a traditional firewall or Web Application Firewall (WAF), it diverts suspicious traffic into a synthetic, AI-generated environment while legitimate users pass through untouched.
+
+The system treats every incoming request as either **real traffic** (forwarded to the actual backend) or **a probe** (redirected to a "Shadow Server" that fabricates a believable response using a Large Language Model). Flagged attackers are kept talking to a fake environment — wasting their time, breaking their automated tooling, and producing a stream of attacker behavior data — while never touching real data.
+
+A second module, **behavioral intent scoring**, extends this beyond single-request pattern matching: it scores a client's *sequence* of requests over a session (using an LSTM or Transformer) to catch attackers who deliberately avoid obvious malicious strings but still behave like a scanner or probing script over time.
+
+---
+
+## 2. Objectives
+
+- Replace reactive blocking with proactive, adaptive deception.
+- Keep legitimate traffic latency near zero.
+- Generate realistic, attacker-specific fake responses on the fly (no pre-built static decoys).
+- Slow down and frustrate automated attack tooling (tarpitting).
+- Score behavior at the session level, not just per-request, to catch slow/stealthy probing.
+- Log attacker behavior for threat intelligence.
+- Keep the system lightweight enough to run on modest, accessible infrastructure.
+
+---
+
+## 3. Full Technology Stack
+
+| Layer | Technology | Role |
+|---|---|---|
+| **Network interception** | Linux `iptables` | Redirects suspicious packets at the OS/network level before they reach the app |
+| | Python `NetfilterQueue` | Userspace hook that lets Python inspect/accept/drop packets pulled from the iptables queue |
+| **Application / Shadow Server** | **FastAPI** (Python) | Hosts both the real API and the fake Shadow Server; implements the inline interception middleware |
+| | **Uvicorn** | ASGI server running FastAPI asynchronously |
+| **Trigger / detection layer** | **Regex** (compiled, combined "tripwire" pattern) | Fast first-pass check for known attack signatures (SQLi, XSS, path traversal, command injection) |
+| | **Scikit-Learn** | Lightweight ML classifier for patterns regex can't catch (e.g. anomalous parameter structure) |
+| | **LSTM / Transformer (behavioral intent scoring)** | Session-level sequence model scoring the *order and timing* of a client's requests to flag stealthy, slow-burn probing |
+| **Generative layer** | **LLM API — Llama 3 or Gemini API** (Claude API is a viable alternative) | Reads the attacker's request context and generates a tailored, realistic fake JSON/HTML response |
+| **Deception mechanics** | **Tarpitting** (`asyncio.sleep` based artificial delay) | Slows responses to flagged clients to break automated scanner throughput, without blocking the event loop |
+| | Sliding-window rate limiter (in-memory `deque` per IP) | Detects flooding/scanning behavior cheaply, O(1) per request |
+| **Data / logging** | **SQLite (WAL mode)** | Lightweight, async-friendly database logging every flagged event |
+| | `asyncio.Queue` + batched writer task | Non-blocking logging pipeline — avoids per-request DB connection overhead |
+| **Testing / validation** | `pytest`, `httpx` (async test client) | Functional testing of the middleware and detection logic |
+| **Deployment target** | Linux VM (local or cloud) | Required for `iptables`/`NetfilterQueue`; app layer is otherwise portable |
+
+---
+
+## 4. System Pipeline
+
+The pipeline has two layers: a **network layer** (packet-level, requires root/Linux) and an **application layer** (request-level, what you've already prototyped). Traffic flows through both.
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │                INTERNET TRAFFIC               │
+                    └───────────────────────┬───────────────────────┘
+                                             │
+                        ┌────────────────────▼────────────────────┐
+                        │  NETWORK LAYER: iptables + NetfilterQueue │
+                        │  - iptables rule sends traffic to NFQUEUE │
+                        │  - Python NFQUEUE handler does a cheap    │
+                        │    pre-check (IP reputation / rate)       │
+                        └────────────────────┬────────────────────┘
+                                             │  accepted packet
+                        ┌────────────────────▼────────────────────┐
+                        │     APPLICATION LAYER: FastAPI middleware │
+                        └────────────────────┬────────────────────┘
+                                             │
+                      ┌──────────────────────┼──────────────────────┐
+                      │                                               │
+          ┌───────────▼───────────┐                     ┌─────────────▼─────────────┐
+          │   TRIGGER MECHANISM     │                     │  BEHAVIORAL INTENT SCORER  │
+          │  - Combined regex       │                     │  - LSTM/Transformer scores │
+          │    tripwire (fast path) │                     │    the session's request    │
+          │  - Scikit-Learn          │                     │    sequence over time       │
+          │    classifier (2nd pass)│                     └─────────────┬─────────────┘
+          └───────────┬───────────┘                                   │
+                      │                                               │
+                      └──────────────────┬────────────────────────────┘
+                                         │
+                         clean? ─── yes ─┤─── no (flagged) ───►
+                                         │
+                      ┌──────────────────▼──────────────────┐
+                      │        REAL BACKEND / API             │         ┌───────────────────────┐
+                      │   (legitimate request handled          │         │     SHADOW SERVER      │
+                      │    normally, near-zero overhead)        │         │  1. Tarpit delay        │
+                      └───────────────────────────────────────┘         │  2. LLM generates fake  │
+                                                                          │     response context-   │
+                                                                          │     aware to the probe  │
+                                                                          │  3. Response returned   │
+                                                                          │     to attacker          │
+                                                                          └───────────┬───────────┘
+                                                                                      │
+                                                                      ┌───────────────▼───────────────┐
+                                                                      │   SQLITE LOGGING (async queue,  │
+                                                                      │   batched writes, WAL mode)      │
+                                                                      │   - timestamp, IP, path,         │
+                                                                      │     category, payload            │
+                                                                      └───────────────────────────────┘
+```
+
+**Flow summary:**
+1. **Intercept** — `iptables` redirects traffic into a queue; `NetfilterQueue` lets Python inspect it before the OS forwards it.
+2. **Trigger** — At the app layer, a single combined regex check runs on every request (cheap). Only requests that trip it undergo a second, more expensive classification pass (regex category lookup + optional Scikit-Learn check).
+3. **Score** — In parallel, the behavioral module tracks each session's request sequence and scores it with the LSTM/Transformer, catching attackers who stay under the regex radar but behave anomalously over time.
+4. **Branch** — Clean + low-score traffic goes straight to the real backend. Flagged traffic is diverted.
+5. **Shadow** — The Shadow Server applies a tarpit delay, then calls the LLM with the attacker's request context to generate a fake, category-appropriate response.
+6. **Log** — Every flagged event is pushed to an async queue and batch-written to SQLite without blocking the response path.
+
+---
+
+## 5. Project Phases
+
+### Phase 1 — Foundation & Environment Setup
+- Provision a Linux VM; configure `iptables` rules and `NetfilterQueue` bindings.
+- Set up the FastAPI/Uvicorn project skeleton and version control.
+- Define the "real" backend endpoint(s) to be protected.
+
+### Phase 2 — Trigger Mechanism (Detection Layer v1)
+- Build and compile the combined regex tripwire (SQLi, XSS, path traversal, command injection, scanner user-agents).
+- Add the category-lookup second pass.
+- Unit-test against known payload datasets.
+
+### Phase 3 — Shadow Server & Tarpitting
+- Build the FastAPI-based Shadow Server and the middleware branch logic.
+- Implement the sliding-window rate limiter and async tarpit delay.
+- Build the template-based fake response generator (interim, pre-LLM).
+
+### Phase 4 — Generative Integration (LLM)
+- Integrate the LLM API (Llama 3 / Gemini), replacing the template generator.
+- Prompt-engineer category-specific generation (fake DB rows, fake shell output, fake file content, etc.).
+- Ensure async, non-blocking calls to the LLM.
+
+### Phase 5 — Logging & Intelligence Pipeline
+- Implement the async SQLite logging queue (WAL mode, batched writer).
+- Build a stats/reporting endpoint or dashboard for reviewing captured attacker behavior.
+
+### Phase 6 — Behavioral Intent Scoring (Advanced Module)
+- Collect/construct a labeled session dataset (sequences of requests, benign vs. attacker).
+- Train the LSTM/Transformer-based sequence scorer.
+- Integrate it as a parallel scoring path alongside the regex trigger.
+
+### Phase 7 — Evaluation & Testing
+- Measure latency overhead on clean traffic (must stay near-zero).
+- Measure false-positive rate on the regex and behavioral layers.
+- Run live/simulated attacker testing (scripted scans, manual probing) and record session length, scanner breakage, and detection-resistance.
+- Compare against a static-honeypot baseline.
+
+### Phase 8 — Documentation, Report & Research Paper
+- Finalize architecture diagrams and synopsis.
+- Write up methodology and results for the PERT-chart deliverables.
+- Draft the research paper (literature review already gathered — SoK on LLM honeypots, HoneyLLM, VelLMes, Otal & Canbaz).
+- Decide and act on the patent-vs-publish sequencing before any public release.
+
+---

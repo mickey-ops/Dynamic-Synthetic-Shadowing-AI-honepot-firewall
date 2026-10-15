@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generative API Shadowing Demo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --panel-bg: rgba(22, 27, 34, 0.7);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --text-main: #c9d1d9;
+            --accent: #58a6ff;
+            --success: #238636;
+            --danger: #da3633;
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            background: radial-gradient(circle at top right, #1a2035, #0d1117);
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 5px;
+            background: -webkit-linear-gradient(0deg, #58a6ff, #8a2be2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            flex: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel h2 {
+            margin-top: 0;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            color: #fff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        button {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        button:hover {
+            background: #3182ce;
+            transform: translateY(-2px);
+        }
+
+        button.danger {
+            background: var(--danger);
+        }
+        button.danger:hover {
+            background: #b92b27;
+        }
+
+        .action-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .test-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .test-card:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: var(--accent);
+        }
+
+        .test-card.attack:hover {
+            border-color: var(--danger);
+        }
+
+        .test-card.running {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .test-card h3 {
+            margin: 0 0 5px 0;
+            font-size: 1.1rem;
+        }
+
+        .test-card p {
+            margin: 0;
+            font-size: 0.9rem;
+            color: #8b949e;
+        }
+
+        pre {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            border: 1px solid rgba(255,255,255,0.05);
+            flex-grow: 1;
+            margin: 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            color: #8b949e;
+            font-weight: 600;
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .badge.clean {
+            background: rgba(35, 134, 54, 0.2);
+            color: #3fb950;
+        }
+
+        .badge.attack {
+            background: rgba(218, 54, 51, 0.2);
+            color: #ff7b72;
+        }
+
+        .badge.real {
+            border: 1px solid #3fb950;
+            color: #3fb950;
+        }
+
+        .badge.shadow {
+            border: 1px solid #ff7b72;
+            color: #ff7b72;
+        }
+
+        .loader {
+            display: none;
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255,255,255,0.1);
+            border-radius: 50%;
+            border-top-color: var(--accent);
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #response-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+
+        .status-bar {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            display: flex;
+            justify-content: space-between;
+            color: #8b949e;
+        }
+
+        .logs-wrapper {
+            overflow-y: auto;
+            max-height: 600px;
+        }
+
+        /* Stats bar */
+        .stats-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stat-chip {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 14px;
+            flex: 1;
+            text-align: center;
+        }
+        .stat-chip .stat-val {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #fff;
+        }
+        .stat-chip .stat-label {
+            font-size: 0.75rem;
+            color: #8b949e;
+            margin-top: 2px;
+        }
+        .stat-chip.green .stat-val { color: #3fb950; }
+        .stat-chip.red .stat-val { color: #ff7b72; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Generative API Shadowing</h1>
+        <p>Dynamic AI Honeypot Firewall Dashboard</p>
+    </header>
+
+    <!-- Stats overview -->
+    <div style="max-width:1400px;margin:0 auto -4px;width:100%;padding:0 0 16px;">
+        <div class="stats-bar">
+            <div class="stat-chip"><div class="stat-val" id="s-total">0</div><div class="stat-label">Total Requests</div></div>
+            <div class="stat-chip green"><div class="stat-val" id="s-legit">0</div><div class="stat-label">Legitimate</div></div>
+            <div class="stat-chip red"><div class="stat-val" id="s-shadow">0</div><div class="stat-label">Shadow-Diverted</div></div>
+            <div class="stat-chip"><div class="stat-val" id="s-cats">0</div><div class="stat-label">Attack Types</div></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Interactive Testing Panel -->
+        <div class="panel" style="flex: 0.8;">
+            <h2>Test Traffic</h2>
+
+            <div class="action-grid">
+                <div class="test-card" id="btn-legit-browse" onclick="simulate('legit-browse', this)">
+                    <h3>🛒 Normal Browse</h3>
+                    <p>GET /api/products</p>
+                </div>
+                <div class="test-card" id="btn-legit-login" onclick="simulate('legit-login', this)">
+                    <h3>🔑 Normal Login</h3>
+                    <p>POST /api/login</p>
+                </div>
+                <div class="test-card attack" id="btn-sqli" onclick="simulate('sqli', this)">
+                    <h3>💉 SQL Injection</h3>
+                    <p>admin' OR 1=1 --</p>
+                </div>
+                <div class="test-card attack" id="btn-xss" onclick="simulate('xss', this)">
+                    <h3>🎭 XSS Attack</h3>
+                    <p>&lt;script&gt;alert(document.cookie)&lt;/script&gt;</p>
+                </div>
+                <div class="test-card attack" id="btn-path" onclick="simulate('path', this)">
+                    <h3>📂 Path Traversal</h3>
+                    <p>../../../etc/passwd</p>
+                </div>
+                <div class="test-card attack" id="btn-cmd" onclick="simulate('cmd', this)">
+                    <h3>💻 Command Injection</h3>
+                    <p>;cat /etc/passwd</p>
+                </div>
+                <div class="test-card attack" id="btn-scanner" onclick="simulate('scanner', this)" style="grid-column: 1 / -1;">
+                    <h3>🤖 Scanner / Recon</h3>
+                    <p>Nikto scanner probe</p>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="margin: 0; color: #fff;">Response</h3>
+                <div class="loader" id="loader"></div>
+            </div>
+
+            <div id="response-container">
+                <pre id="response-output">Click a button above to send a request…</pre>
+                <div class="status-bar">
+                    <span id="latency-val">Latency: —</span>
+                    <span id="handled-by">Handled by: —</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logging Panel -->
+        <div class="panel" style="flex: 1.2;">
+            <h2>
+                Traffic Logs
+                <div>
+                    <button onclick="fetchLogs()" style="margin-right: 10px; background: rgba(255,255,255,0.1); color: #fff;">Refresh</button>
+                    <button class="danger" onclick="clearLogs()">Clear</button>
+                </div>
+            </h2>
+            <div class="logs-wrapper">
+                <table id="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Path</th>
+                            <th>Category</th>
+                            <th>Action</th>
+                            <th>Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-body">
+                        <!-- Logs will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';  // Same origin
+
+        // ── Attack simulation via POST /api/simulate ──
+        async function simulate(attackType, cardEl) {
+            const output = document.getElementById('response-output');
+            const loader = document.getElementById('loader');
+            const latencySpan = document.getElementById('latency-val');
+            const handledSpan = document.getElementById('handled-by');
+
+            if (cardEl) cardEl.classList.add('running');
+            output.textContent = 'Sending request…';
+            latencySpan.textContent = 'Latency: —';
+            handledSpan.textContent = 'Handled by: —';
+            loader.style.display = 'block';
+
+            try {
+                const t0 = performance.now();
+                const res = await fetch(API_BASE + '/api/simulate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ attack_type: attackType })
+                });
+
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                const clientMs = Math.round(performance.now() - t0);
+
+                if (data.routed_to === 'SHADOW') {
+                    handledSpan.innerHTML = 'Handled by: <span class="badge shadow">Shadow Server (Tarpit)</span>';
+                    output.textContent =
+                        'Attack detected: ' + data.category + '\n' +
+                        'Payload: ' + data.attack_payload + '\n' +
+                        'Tarpit delay applied (' + data.latency_ms + 'ms server-side)\n\n' +
+                        'Fake response sent to attacker:\n' +
+                        JSON.stringify(data.shadow_response, null, 2);
+                } else {
+                    handledSpan.innerHTML = 'Handled by: <span class="badge real">Real Backend</span>';
+                    output.textContent =
+                        '✅ Clean traffic — forwarded to real backend\n\n' +
+                        JSON.stringify(data.real_response, null, 2);
+                }
+
+                latencySpan.textContent = 'Latency: ' + clientMs + 'ms (server: ' + data.latency_ms + 'ms)';
+
+                // Refresh logs & stats after simulation
+                fetchLogs();
+                fetchStats();
+
+            } catch (err) {
+                output.textContent = '❌ Error: ' + err.message + '\nIs the server running?';
+            } finally {
+                loader.style.display = 'none';
+                if (cardEl) cardEl.classList.remove('running');
+            }
+        }
+
+        // ── Fetch traffic logs from /api/firewall/logs ──
+        async function fetchLogs() {
+            try {
+                const res = await fetch(API_BASE + '/api/firewall/logs?limit=50');
+                const logs = await res.json();
+
+                const tbody = document.getElementById('logs-body');
+                tbody.innerHTML = '';
+
+                logs.forEach(log => {
+                    const tr = document.createElement('tr');
+
+                    const time = log.ts ? new Date(log.ts).toLocaleTimeString() : '';
+                    const catBadge = log.category === 'Clean' ? 'clean' : 'attack';
+                    const actBadge = log.action === 'REAL' ? 'real' : 'shadow';
+                    const latencyStr = log.latency_ms != null ? log.latency_ms.toFixed(0) + 'ms' : '';
+
+                    tr.innerHTML = `
+                        <td>${time}</td>
+                        <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${log.path || ''}">${log.method || ''} ${log.path || ''}</td>
+                        <td><span class="badge ${catBadge}">${log.category || ''}</span></td>
+                        <td><span class="badge ${actBadge}">${log.action || ''}</span></td>
+                        <td>${latencyStr}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                console.error('Failed to fetch logs:', err);
+            }
+        }
+
+        // ── Fetch stats from /api/firewall/stats ──
+        async function fetchStats() {
+            try {
+                const res = await fetch(API_BASE + '/api/firewall/stats');
+                const s = await res.json();
+                document.getElementById('s-total').textContent = s.total_requests;
+                document.getElementById('s-legit').textContent = s.legitimate;
+                document.getElementById('s-shadow').textContent = s.shadow_diverted;
+                document.getElementById('s-cats').textContent = Object.keys(s.categories || {}).length;
+            } catch (err) {
+                console.error('Failed to fetch stats:', err);
+            }
+        }
+
+        // ── Clear logs via DELETE /api/firewall/logs ──
+        async function clearLogs() {
+            try {
+                await fetch(API_BASE + '/api/firewall/logs', { method: 'DELETE' });
+                fetchLogs();
+                fetchStats();
+            } catch (err) {
+                console.error('Failed to clear logs:', err);
+            }
+        }
+
+        // ── Initial load + auto-refresh ──
+        fetchLogs();
+        fetchStats();
+        setInterval(fetchLogs, 5000);
+        setInterval(fetchStats, 5000);
+    </script>
+</body>
+</html>
